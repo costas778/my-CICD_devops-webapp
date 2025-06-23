@@ -1,0 +1,34 @@
+name: Build and Deploy to ACI
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Log in to ACR
+      run: echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_NAME }}.azurecr.io -u ${{ secrets.ACR_USERNAME }} --password-stdin
+
+    - name: Build Docker image
+      run: docker build -t ${{ secrets.ACR_NAME }}.azurecr.io/myapp:latest .
+
+    - name: Push Docker image
+      run: docker push ${{ secrets.ACR_NAME }}.azurecr.io/myapp:latest
+
+    - name: Deploy to Azure Container Instances
+      uses: azure/aci-deploy@v1
+      with:
+        resource-group: ${{ secrets.AZURE_RESOURCE_GROUP }}
+        dns-name-label: myapp-${{ github.run_number }}   # change this to something unique per run
+        image: ${{ secrets.ACR_NAME }}.azurecr.io/myapp:latest
+        registry-login-server: ${{ secrets.ACR_NAME }}.azurecr.io
+        registry-username: ${{ secrets.ACR_USERNAME }}
+        registry-password: ${{ secrets.ACR_PASSWORD }}
+        name: myapp-container
+        location: westus
