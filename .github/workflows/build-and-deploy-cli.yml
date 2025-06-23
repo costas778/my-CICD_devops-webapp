@@ -1,40 +1,70 @@
 # .github/workflows/build-and-deploy-cli.yml
-
 name: Build and Deploy to ACI via CLI
 
 on:
   push:
-    branches: [main]
+    branches: [main]        # change if your default branch is different
+  workflow_dispatch:        # lets you trigger it manually from the UI
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
+    # 1️⃣ Check out the repo
     - name: Checkout code
       uses: actions/checkout@v3
 
+    # 2️⃣ Log in to Azure Container Registry using admin creds
     - name: Log in to ACR
-      run: echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_NAME }}.azurecr.io -u ${{ secrets.ACR_USERNAME }} --password-stdin
+      env:
+        REGISTRY: ${{ secrets.ACR_NAME }}.azurecr.io
+      run: |
+        echo "${{ secrets.ACR_PASSWORD }}" | \
+          docker login $REGISTRY -u ${{ secrets.ACR_USERNAME }} --password-stdin
 
+    # 3️⃣ Build and tag the Docker image
     - name: Build Docker image
-      run: docker build -t ${{ secrets.ACR_NAME }}.azurecr.io/myapp:latest .
+      env:
+        REGISTRY: ${{ secrets.ACR_NAME }}.azurecr.io
+      run: docker build -t $REGISTRY/myapp:latest .
 
+    # 4️⃣ Push the image to ACR
     - name: Push Docker image
-      run: docker push ${{ secrets.ACR_NAME }}.azurecr.io/myapp:latest
+      env:
+        REGISTRY: ${{ secrets.ACR_NAME }}.azurecr.io
+      run: docker push $REGISTRY/myapp:latest
 
-    - name: Azure CLI Login (Assumes GitHub-hosted runner is already authenticated)
-      run: az account show
-
+    # 5️⃣ Deploy to Azure Container Instances via az CLI (no az login needed in sandbox)
     - name: Deploy to ACI using az CLI
+      env:
+        RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+        REGISTRY: ${{ secrets.ACR_NAME }}.azurecr.io
       run: |
         az container create \
-          --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+          --resource-group "$RG" \
           --name myapp-container-${{ github.run_number }} \
-          --image ${{ secrets.ACR_NAME }}.azurecr.io/myapp:latest \
-          --registry-login-server ${{ secrets.ACR_NAME }}.azurecr.io \
+          --image $REGISTRY/myapp:latest \
+          --registry-login-server $REGISTRY \
           --registry-username ${{ secrets.ACR_USERNAME }} \
           --registry-password ${{ secrets.ACR_PASSWORD }} \
           --dns-name-label myapp-${{ github.run_number }} \
           --ports 80 \
           --location westus
+
+    # 6️⃣ Display the DNS-based URL
+    - name: Show Live App URL
+      run: |
+        echo "🚀 Your app is live at:"
+        echo "http://myapp-${{ github.run_number }}.westus.azurecontainer.io"
+
+    # 7️⃣ (Optional) Also show the direct public IP
+    - name: Get ACI Public IP
+      env:
+        RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+      run: |
+        IP=$(az container show \
+            --resource-group "$RG" \
+            --name myapp-container-${{ github.run_number }} \
+            --query "ipAddress.ip" -o tsv)
+        echo "📍 Direct IP access: http://$IP"
